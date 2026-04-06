@@ -35,6 +35,7 @@ Wildfire management is a critical global challenge. In 2023 alone, the US spent 
 | `request_mutual_aid` | — | Request additional resources (4-5hr ETA) |
 | `reassess_priority` | `fire_id`, `priority` | Change fire priority (1=highest) |
 | `set_backfire` | `location`, `fire_id` | Controlled burn (risky near structures) |
+| `investigate` | `target` | Investigate a fire/resource for hidden threats |
 | `communicate` | `message`, `channel` | Send status update / alert agencies |
 | `resolve` | — | Mark situation as handled |
 
@@ -90,6 +91,7 @@ Each observation includes:
 | Critical communication (pipeline) | +0.10 |
 | Creating firebreak | +0.08 |
 | Requesting mutual aid | +0.08 |
+| Investigating hidden threat | +0.08 |
 | Rotating fatigued crew | +0.06 |
 | General communication | +0.04 |
 | Wrong deployment | +0.03 (partial) |
