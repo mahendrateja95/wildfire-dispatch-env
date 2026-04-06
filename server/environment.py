@@ -257,15 +257,10 @@ class WildfireDispatchEnvironment:
 
         # Check fatigue -- dangerous action
         if crew.get("hours_on_duty", 0) >= 12 and crew.get("status") == "fatigued":
-            dangerous_key = None
-            for k in self._dangerous_action_map:
-                if crew_id.lower() in k.lower() or "fatigued" in k.lower():
-                    dangerous_key = k
-                    break
-            if dangerous_key:
-                self._state.dangerous_actions_taken.append(dangerous_key)
-                self._state.penalties += 0.06
-                return -0.06, f"SAFETY VIOLATION: {crew['name']} has been on duty {crew['hours_on_duty']}h. Deploying fatigued crews risks injury. Rest them first.", info
+            dangerous_key = f"deploy_fatigued_{crew_id}"
+            self._state.dangerous_actions_taken.append(dangerous_key)
+            self._state.penalties += 0.06
+            return -0.06, f"SAFETY VIOLATION: {crew['name']} has been on duty {crew['hours_on_duty']}h. Deploying fatigued crews risks injury. Rest them first.", info
 
         crew["assigned_to"] = fire_id
         crew["status"] = "deployed"
