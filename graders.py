@@ -19,6 +19,69 @@ def _check_actions(done_actions: List[str], critical: List[str]) -> float:
     return _set_overlap(done_actions, critical)
 
 
+# ------------------------------------------------------------------
+# Shared bonus helpers
+# ------------------------------------------------------------------
+
+def _timing_bonus(state: Dict[str, Any], zone_keyword: str, max_step: int, bonus: float) -> float:
+    """Award a bonus if an evacuation matching zone_keyword happened at or before max_step."""
+    action_history = state.get("action_history", [])
+    for entry in action_history:
+        if entry.get("action_type") == "order_evacuation":
+            zone_id = entry.get("params", {}).get("zone_id", "")
+            if zone_keyword in zone_id.lower():
+                if entry.get("step", 999) <= max_step:
+                    return bonus
+    return 0.0
+
+
+def _evacuation_before_crew_bonus(state: Dict[str, Any], bonus: float = 0.02) -> float:
+    """Award bonus if ANY evacuation was ordered BEFORE any crew deployment (life safety first)."""
+    action_history = state.get("action_history", [])
+    first_evac_step = None
+    first_crew_step = None
+    for entry in action_history:
+        atype = entry.get("action_type", "")
+        step = entry.get("step", 999)
+        if atype == "order_evacuation" and first_evac_step is None:
+            first_evac_step = step
+        if atype == "deploy_crew" and first_crew_step is None:
+            first_crew_step = step
+    # Bonus if evacuation came first (or if no crew was deployed at all)
+    if first_evac_step is not None:
+        if first_crew_step is None or first_evac_step < first_crew_step:
+            return bonus
+    return 0.0
+
+
+def _budget_efficiency_bonus(state: Dict[str, Any]) -> float:
+    """Score based on budget efficiency at resolution."""
+    budget_remaining = state.get("budget_remaining", 0)
+    budget_total = state.get("budget_total", 1)
+    if budget_total <= 0:
+        return 0.0
+    ratio = budget_remaining / budget_total
+    if ratio > 0.50:
+        return 0.02  # Didn't overspend
+    elif ratio < 0.10:
+        return -0.02  # Wasteful
+    return 0.0
+
+
+def _communication_quality(state: Dict[str, Any], keywords: List[str]) -> float:
+    """Score communications based on keyword relevance (0.0 to 0.05 bonus)."""
+    comms = state.get("communications_sent", [])
+    if not comms:
+        return 0.0
+    comms_text = " ".join(c.lower() for c in comms)
+    matched = sum(1 for kw in keywords if kw in comms_text)
+    if matched == 0:
+        return 0.0
+    # Proportional bonus up to 0.05 based on keyword coverage
+    coverage = matched / len(keywords)
+    return round(0.05 * coverage, 4)
+
+
 # ======================================================================
 # EASY GRADER
 # ======================================================================
@@ -34,6 +97,7 @@ def grade_easy(state: Dict[str, Any]) -> float:
       - Communication sent:           0.10
       - Resolved:                     0.15
       - Efficiency (fewer steps):     0.10
+      - Bonuses (comm quality, budget): up to ~0.07
     """
     score = 0.0
 
@@ -80,6 +144,14 @@ def grade_easy(state: Dict[str, Any]) -> float:
         efficiency = max(0, 1.0 - (steps / max_steps))
         score += 0.10 * efficiency
 
+    # --- ENHANCED BONUSES ---
+
+    # Communication quality: reward mentioning relevant keywords
+    score += _communication_quality(state, ["cedar", "highway", "fire"])
+
+    # Budget efficiency
+    score += _budget_efficiency_bonus(state)
+
     score -= state.get("penalties", 0.0)
     return round(min(1.0, max(0.0, score)), 4)
 
@@ -102,6 +174,7 @@ def grade_medium(state: Dict[str, Any]) -> float:
       - Communication:               0.10
       - Resolved:                    0.10
       - Efficiency:                  0.05
+      - Bonuses (timing, ordering, comm quality, budget): up to ~0.12
     """
     score = 0.0
 
@@ -162,6 +235,20 @@ def grade_medium(state: Dict[str, Any]) -> float:
         efficiency = max(0, 1.0 - (steps / max_steps))
         score += 0.05 * efficiency
 
+    # --- ENHANCED BONUSES ---
+
+    # Timing: Oakdale evacuation in first 4 steps
+    score += _timing_bonus(state, "oakdale", max_step=4, bonus=0.03)
+
+    # Action ordering: evacuation before crew deployment (life safety first)
+    score += _evacuation_before_crew_bonus(state, bonus=0.02)
+
+    # Communication quality: reward mentioning relevant keywords
+    score += _communication_quality(state, ["valley", "oakdale", "evacuation"])
+
+    # Budget efficiency
+    score += _budget_efficiency_bonus(state)
+
     # Penalties
     score -= state.get("penalties", 0.0)
     return round(min(1.0, max(0.0, score)), 4)
@@ -189,6 +276,7 @@ def grade_hard(state: Dict[str, Any]) -> float:
       - Communication:               0.05
       - Resolved:                    0.05
       - Efficiency:                  0.02
+      - Bonuses (timing, ordering, investigation, comm quality, budget): up to ~0.16
     """
     score = 0.0
 
@@ -226,8 +314,12 @@ def grade_hard(state: Dict[str, Any]) -> float:
 
     # Pipeline threat discovery (0.12) -- checked diagnostic about creek fire or pipeline
     diagnostics = [d.lower() for d in state.get("diagnostics_run", [])]
-    if any("creek" in d or "pipeline" in d for d in diagnostics):
+    pipeline_discovered = any("creek" in d or "pipeline" in d for d in diagnostics)
+    if pipeline_discovered:
         score += 0.12
+    elif len(diagnostics) > 0:
+        # Partial credit for investigating ANY topic (shows investigative diligence)
+        score += 0.04
 
     # Communicated pipeline risk (0.08)
     comms_lower = [c.lower() for c in state.get("communications_sent", [])]
@@ -274,6 +366,20 @@ def grade_hard(state: Dict[str, Any]) -> float:
     if steps > 0:
         efficiency = max(0, 1.0 - (steps / max_steps))
         score += 0.02 * efficiency
+
+    # --- ENHANCED BONUSES ---
+
+    # Timing: school evacuation in first 5 steps
+    score += _timing_bonus(state, "school", max_step=5, bonus=0.03)
+
+    # Action ordering: evacuation before crew deployment (life safety first)
+    score += _evacuation_before_crew_bonus(state, bonus=0.02)
+
+    # Communication quality: reward mentioning relevant keywords
+    score += _communication_quality(state, ["pipeline", "school", "hospital"])
+
+    # Budget efficiency
+    score += _budget_efficiency_bonus(state)
 
     score -= state.get("penalties", 0.0)
     return round(min(1.0, max(0.0, score)), 4)

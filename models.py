@@ -180,3 +180,9 @@ class WildfireState(State):
     correct_aircraft_deployments: Dict[str, str] = Field(default_factory=dict)
     critical_actions: List[str] = Field(default_factory=list)
     dangerous_action_map: Dict[str, str] = Field(default_factory=dict)
+    budget_efficiency: float = Field(default=1.0, description="Ratio of useful vs total spending (1.0 = perfect)")
+    total_useful_spending: float = 0.0
+    total_wasteful_spending: float = 0.0
+    creek_fire_surprise_triggered: bool = False
+    # Action history for grading (tracks action_type and step for ordering analysis)
+    action_history: List[Dict[str, Any]] = Field(default_factory=list)

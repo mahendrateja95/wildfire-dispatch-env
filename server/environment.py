@@ -27,6 +27,24 @@ from graders import GRADERS
 class WildfireDispatchEnvironment:
     """Simulates wildfire resource dispatch decisions."""
 
+    # Terrain-based fire spread rate multipliers
+    TERRAIN_MULTIPLIERS: Dict[str, float] = {
+        "grassland": 1.5,
+        "forest": 1.0,
+        "canyon": 2.0,
+        "urban_interface": 0.7,
+        "brush": 1.2,
+        # Compound terrains get blended rates
+        "canyon_urban_interface": 1.6,  # canyon effect dominates but urban slows slightly
+        "grassland_urban_interface": 1.1,  # grass spread but urban structures slow it
+    }
+
+    # Wind direction vectors for interaction calculation
+    WIND_VECTORS: Dict[str, Tuple[float, float]] = {
+        "N": (0, 1), "NE": (0.707, 0.707), "E": (1, 0), "SE": (0.707, -0.707),
+        "S": (0, -1), "SW": (-0.707, -0.707), "W": (-1, 0), "NW": (-0.707, 0.707),
+    }
+
     def __init__(self) -> None:
         self._state: Optional[WildfireState] = None
         self._scenario: Optional[Dict[str, Any]] = None
@@ -83,6 +101,13 @@ class WildfireDispatchEnvironment:
 
         at = action.action_type
         params = action.parameters
+
+        # Track action history for grading (ordering analysis)
+        self._state.action_history.append({
+            "action_type": at.value if hasattr(at, "value") else str(at),
+            "step": self._state.step_count,
+            "params": dict(params) if params else {},
+        })
 
         # ---- DEPLOY CREW ----
         if at == ActionType.DEPLOY_CREW:
@@ -214,6 +239,14 @@ class WildfireDispatchEnvironment:
         # Simulate fire growth each step
         self._simulate_fire_growth()
 
+        # Fire proximity urgency: penalize when vulnerable zones are close to fire and not evacuated
+        step_reward += self._compute_proximity_urgency_penalty()
+
+        # Surprise event: Creek Fire accelerates if not investigated (hard task)
+        surprise_hint = self._check_surprise_events()
+        if surprise_hint:
+            hint += f"\n\n{surprise_hint}"
+
         # Check done
         done = False
         if self._state.resolved:
@@ -268,11 +301,15 @@ class WildfireDispatchEnvironment:
         self._state.fires[fire_id]["crews_assigned"].append(crew_id)
         self._state.budget_remaining -= 20000
 
-        # Check if correct deployment
+        # Check if correct deployment and track budget efficiency
         correct = self._scenario.get("correct_crew_deployments", {})
         if correct.get(crew_id) == fire_id:
+            self._state.total_useful_spending += 20000
+            self._update_budget_efficiency()
             return 0.12, f"{crew['name']} deployed to {self._state.fires[fire_id]['name']}. Good deployment.", info
         else:
+            self._state.total_wasteful_spending += 20000
+            self._update_budget_efficiency()
             return 0.04, f"{crew['name']} deployed to {self._state.fires[fire_id]['name']}.", info
 
     def _handle_deploy_aircraft(self, aircraft_id: str, fire_id: str) -> Tuple[float, str, Dict]:
@@ -293,8 +330,12 @@ class WildfireDispatchEnvironment:
 
         correct = self._scenario.get("correct_aircraft_deployments", {})
         if correct.get(aircraft_id) == fire_id:
+            self._state.total_useful_spending += 30000
+            self._update_budget_efficiency()
             return 0.10, f"{ac['name']} deployed for water drops on {self._state.fires[fire_id]['name']}.", info
         else:
+            self._state.total_wasteful_spending += 30000
+            self._update_budget_efficiency()
             return 0.03, f"{ac['name']} deployed to {self._state.fires[fire_id]['name']}.", info
 
     def _handle_evacuation(self, zone_id: str) -> Tuple[float, str, Dict]:
@@ -316,8 +357,12 @@ class WildfireDispatchEnvironment:
             pop = zone.get("population", 0)
             vuln = zone.get("has_vulnerable", False)
             reward = 0.15 if vuln else 0.10
+            self._state.total_useful_spending += cost
+            self._update_budget_efficiency()
             return reward, f"EVACUATION ORDERED: {zone['name']} ({pop} people). {'Vulnerable population -- critical evacuation.' if vuln else 'Residents being moved to safety.'}", info
         else:
+            self._state.total_wasteful_spending += cost
+            self._update_budget_efficiency()
             return 0.02, f"Evacuation ordered for {zone['name']}. (This zone was not in immediate danger.)", info
 
     def _handle_rotate_crew(self, crew_id: str) -> Tuple[float, str]:
@@ -366,28 +411,64 @@ class WildfireDispatchEnvironment:
     # Simulation
     # ------------------------------------------------------------------
 
+    def _compute_wind_fire_interaction(self, fire_spread_dir: str) -> float:
+        """Compute multiplier based on wind-fire direction alignment.
+
+        Returns:
+            Multiplier: >1.0 if wind aids spread, <1.0 if wind opposes.
+        """
+        wind_dir = self._state.weather.get("wind_direction", "N")
+        wind_vec = self.WIND_VECTORS.get(wind_dir, (0, 0))
+        fire_vec = self.WIND_VECTORS.get(fire_spread_dir, (0, 0))
+
+        # Dot product: 1.0 = same direction, -1.0 = opposite
+        dot = wind_vec[0] * fire_vec[0] + wind_vec[1] * fire_vec[1]
+
+        if dot > 0.5:
+            # Wind aids fire spread: up to +40%
+            return 1.0 + 0.4 * dot
+        elif dot < -0.5:
+            # Wind opposes fire spread: up to -30%
+            return 1.0 + 0.3 * dot  # dot is negative, so this reduces
+        return 1.0
+
     def _simulate_fire_growth(self) -> None:
-        """Each step, fires grow based on rate, reduced by assigned resources.
-        Also simulates weather changes based on forecast timeline."""
+        """Each step, fires grow based on rate, terrain, wind interaction,
+        and are reduced by assigned resources. Also simulates weather changes
+        and crew fatigue progression."""
         # Dynamic weather: update conditions based on elapsed time
         self._update_weather()
 
         for fid, fire in self._state.fires.items():
             base_rate = fire.get("spread_rate_acres_per_hour", 10.0)
+
+            # --- Terrain multiplier ---
+            terrain = fire.get("terrain", "forest")
+            terrain_mult = self.TERRAIN_MULTIPLIERS.get(terrain, 1.0)
+
+            # --- Wind-fire interaction multiplier ---
+            spread_dir = fire.get("spread_direction", "N")
+            wind_mult = self._compute_wind_fire_interaction(spread_dir)
+
+            adjusted_rate = base_rate * terrain_mult * wind_mult
+
             # Resources slow fire: each crew reduces by 30%, each aircraft by 25%
             num_crews = len(fire.get("crews_assigned", []))
             num_aircraft = len(fire.get("aircraft_assigned", []))
             reduction = min(0.95, num_crews * 0.30 + num_aircraft * 0.25)
-            effective_rate = base_rate * (1.0 - reduction)
+            effective_rate = adjusted_rate * (1.0 - reduction)
+
             # Each step is 0.5 hours
             growth = effective_rate * 0.5
             fire["acres"] = fire.get("acres", 0) + growth
+
             # Containment increases with resources
             if num_crews > 0 or num_aircraft > 0:
                 fire["containment_percent"] = min(
                     100.0,
                     fire.get("containment_percent", 0) + (num_crews * 3.0 + num_aircraft * 2.0),
                 )
+
             # Update distance to evac zones
             for zid, zone in self._state.evac_zones.items():
                 if zone.get("nearest_fire") == fid:
@@ -395,6 +476,13 @@ class WildfireDispatchEnvironment:
                     # Fire approaches: rough model
                     approach_km = (effective_rate * 0.5) * 0.01  # acres to rough km
                     zone["distance_to_nearest_fire_km"] = max(0.1, dist - approach_km)
+
+        # --- Crew fatigue progression: deployed crews accumulate fatigue ---
+        for cid, crew in self._state.crews.items():
+            if crew.get("status") == "deployed" and crew.get("assigned_to"):
+                crew["hours_on_duty"] = crew.get("hours_on_duty", 0) + 0.5
+                if crew["hours_on_duty"] >= 12.0 and crew["status"] != "fatigued":
+                    crew["status"] = "fatigued"
 
     def _update_weather(self) -> None:
         """Simulate weather changes over time based on scenario forecasts."""
@@ -432,6 +520,64 @@ class WildfireDispatchEnvironment:
                 if "fire_z" in self._state.fires:
                     self._state.fires["fire_z"]["spread_rate_acres_per_hour"] = 20.0
                     self._state.fires["fire_z"]["spread_direction"] = "SE"
+
+    # ------------------------------------------------------------------
+    # Budget efficiency & urgency helpers
+    # ------------------------------------------------------------------
+
+    def _update_budget_efficiency(self) -> None:
+        """Recalculate budget efficiency ratio."""
+        total = self._state.total_useful_spending + self._state.total_wasteful_spending
+        if total > 0:
+            self._state.budget_efficiency = self._state.total_useful_spending / total
+        else:
+            self._state.budget_efficiency = 1.0
+
+    def _compute_proximity_urgency_penalty(self) -> float:
+        """Small continuous negative reward when vulnerable, un-evacuated zones
+        are dangerously close to fire. Creates urgency signal for the agent."""
+        penalty = 0.0
+        for zid, zone in self._state.evac_zones.items():
+            if zone.get("is_evacuated"):
+                continue
+            if not zone.get("has_vulnerable"):
+                continue
+            dist = zone.get("distance_to_nearest_fire_km", 10.0)
+            if dist < 2.0:
+                # Scale: closer = worse.  At 0.1km => -0.03, at 2.0km => -0.01
+                severity = 0.01 + 0.02 * max(0.0, (2.0 - dist) / 2.0)
+                penalty -= severity
+        return penalty
+
+    def _check_surprise_events(self) -> str:
+        """Trigger surprise events for added realism and difficulty."""
+        if self._state.task_id != "hard_cascading_disaster":
+            return ""
+
+        # Creek Fire surprise: at step 10+, if not investigated, it suddenly grows 3x
+        if (
+            self._state.step_count >= 10
+            and not self._state.creek_fire_surprise_triggered
+            and "check_creek_fire_detail" not in self._state.diagnostics_run
+            and "fire_z" in self._state.fires
+        ):
+            self._state.creek_fire_surprise_triggered = True
+            fire_z = self._state.fires["fire_z"]
+            fire_z["acres"] = fire_z.get("acres", 45) * 3.0
+            fire_z["spread_rate_acres_per_hour"] = fire_z.get("spread_rate_acres_per_hour", 10) * 2.0
+            fire_z["threats"] = [
+                "Remote forest land",
+                "TransCo Gas Pipeline LP-7 (CRITICAL - 3km away)",
+                "Pipeline explosion risk (5km blast radius)",
+            ]
+            return (
+                "SURPRISE DEVELOPMENT: Creek Fire has exploded in size -- a ruptured underground "
+                "gas seep is accelerating the blaze. Fire is now 3x larger and spreading faster. "
+                "TransCo gas pipeline is now directly threatened. "
+                "TIP: Investigate 'check_creek_fire_detail' and alert the gas company IMMEDIATELY."
+            )
+
+        return ""
 
     # ------------------------------------------------------------------
     # Observation builder
