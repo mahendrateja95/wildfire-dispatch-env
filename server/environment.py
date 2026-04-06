@@ -367,7 +367,11 @@ class WildfireDispatchEnvironment:
     # ------------------------------------------------------------------
 
     def _simulate_fire_growth(self) -> None:
-        """Each step, fires grow based on rate, reduced by assigned resources."""
+        """Each step, fires grow based on rate, reduced by assigned resources.
+        Also simulates weather changes based on forecast timeline."""
+        # Dynamic weather: update conditions based on elapsed time
+        self._update_weather()
+
         for fid, fire in self._state.fires.items():
             base_rate = fire.get("spread_rate_acres_per_hour", 10.0)
             # Resources slow fire: each crew reduces by 30%, each aircraft by 25%
@@ -391,6 +395,43 @@ class WildfireDispatchEnvironment:
                     # Fire approaches: rough model
                     approach_km = (effective_rate * 0.5) * 0.01  # acres to rough km
                     zone["distance_to_nearest_fire_km"] = max(0.1, dist - approach_km)
+
+    def _update_weather(self) -> None:
+        """Simulate weather changes over time based on scenario forecasts."""
+        hours = self._state.time_elapsed_hours
+        weather = self._state.weather
+        task = self._state.task_id
+
+        if task == "medium_two_fires" and hours >= 4.0:
+            # Wind shifts toward Oakdale after 4 hours
+            weather["wind_direction"] = "W"
+            weather["wind_speed_kmh"] = 30.0
+            weather["temperature_celsius"] = 42.0
+            weather["humidity_percent"] = 10.0
+            weather["fire_danger_rating"] = "extreme"
+            # Valley Fire accelerates toward town
+            if "fire_valley" in self._state.fires:
+                self._state.fires["fire_valley"]["spread_rate_acres_per_hour"] = 40.0
+
+        elif task == "hard_cascading_disaster":
+            if hours >= 2.0 and hours < 6.0:
+                # First shift: NE wind pushes Hillside Fire faster toward school
+                weather["wind_direction"] = "NE"
+                weather["wind_speed_kmh"] = 35.0
+                if "fire_y" in self._state.fires:
+                    self._state.fires["fire_y"]["spread_rate_acres_per_hour"] = 45.0
+            elif hours >= 6.0 and hours < 10.0:
+                # Second shift: E wind
+                weather["wind_direction"] = "E"
+                weather["wind_speed_kmh"] = 25.0
+            elif hours >= 10.0:
+                # Third shift: SE wind pushes Creek Fire toward pipeline
+                weather["wind_direction"] = "SE"
+                weather["wind_speed_kmh"] = 30.0
+                weather["humidity_percent"] = 5.0
+                if "fire_z" in self._state.fires:
+                    self._state.fires["fire_z"]["spread_rate_acres_per_hour"] = 20.0
+                    self._state.fires["fire_z"]["spread_direction"] = "SE"
 
     # ------------------------------------------------------------------
     # Observation builder
