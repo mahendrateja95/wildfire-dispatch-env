@@ -206,8 +206,10 @@ class WildfireDispatchEnvironment:
         elif at == ActionType.RESOLVE:
             step_reward, hint = self._handle_resolve()
 
-        # Accumulate reward
-        self._state.reward_accumulated = getattr(self._state, "reward_accumulated", 0.0) + step_reward
+        # Accumulate reward (tracked for debugging)
+        if not hasattr(self._state, "_reward_accumulated"):
+            self._state._reward_accumulated = 0.0
+        self._state._reward_accumulated += step_reward
 
         # Simulate fire growth each step
         self._simulate_fire_growth()
@@ -328,19 +330,25 @@ class WildfireDispatchEnvironment:
             return -0.01, f"Unknown crew '{crew_id}'."
 
         crew = self._state.crews[crew_id]
+        old_hours = crew.get("hours_on_duty", 0)
+        old_status = crew.get("status", "")
         old_assignment = crew.get("assigned_to")
+
+        # Remove from fire assignment
+        if old_assignment and old_assignment in self._state.fires:
+            fire = self._state.fires[old_assignment]
+            if crew_id in fire["crews_assigned"]:
+                fire["crews_assigned"].remove(crew_id)
+
+        # Reset crew state
         crew["status"] = "available"
         crew["hours_on_duty"] = 0.0
         crew["assigned_to"] = None
         crew["location"] = "Rest area"
         self._state.crews_rotated.append(crew_id)
 
-        if old_assignment and old_assignment in self._state.fires:
-            fire = self._state.fires[old_assignment]
-            if crew_id in fire["crews_assigned"]:
-                fire["crews_assigned"].remove(crew_id)
-
-        if crew.get("hours_on_duty", 0) >= 10 or "fatigued" in crew.get("status", ""):
+        # Reward based on pre-rotation fatigue
+        if old_hours >= 10 or old_status == "fatigued":
             return 0.06, f"{crew['name']} rotated off duty for rest. Good safety practice."
         return 0.03, f"{crew['name']} rotated off duty."
 

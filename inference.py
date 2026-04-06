@@ -26,6 +26,7 @@ STDOUT FORMAT
 import asyncio
 import json
 import os
+import sys
 import textwrap
 from typing import Any, Dict, List, Optional
 
@@ -413,7 +414,6 @@ async def main() -> None:
         results.append(result)
 
     # Summary to stderr (not part of structured output)
-    import sys
     print("\n=== SUMMARY ===", file=sys.stderr)
     for r in results:
         print(f"  {r['task_name']}: score={r['score']:.3f} steps={r['steps']} success={r['success']}", file=sys.stderr)

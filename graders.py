@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 
 def _set_overlap(actual: List[str], expected: List[str]) -> float:

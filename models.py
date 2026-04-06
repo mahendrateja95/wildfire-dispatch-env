@@ -46,21 +46,6 @@ class ActionType(str, Enum):
     RESOLVE = "resolve"
 
 
-class CrewStatus(str, Enum):
-    AVAILABLE = "available"
-    DEPLOYED = "deployed"
-    FATIGUED = "fatigued"
-    INJURED = "injured"
-    EN_ROUTE = "en_route"
-
-
-class AircraftStatus(str, Enum):
-    AVAILABLE = "available"
-    DEPLOYED = "deployed"
-    MAINTENANCE = "maintenance"
-    REFUELING = "refueling"
-
-
 # ---------------------------------------------------------------------------
 # Sub-models
 # ---------------------------------------------------------------------------
