@@ -1,0 +1,19 @@
+[project]
+name = "wildfire-dispatch-env"
+version = "0.1.0"
+description = "OpenEnv environment simulating wildfire resource dispatch and emergency coordination"
+requires-python = ">=3.11"
+dependencies = [
+    "openenv-core>=0.1.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.0.0",
+    "openai>=1.0.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
