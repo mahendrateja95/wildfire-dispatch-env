@@ -15,6 +15,22 @@ tags:
 
 ---
 
+## Safety Disclaimer
+
+**THIS IS A RESEARCH SIMULATION. NOT FOR OPERATIONAL USE.**
+
+This environment is built solely for evaluating and training AI agents in a controlled benchmark setting. It must NOT be used to:
+
+- Inform, replace, or augment real wildfire dispatch decisions
+- Train models intended for deployment in real emergency response systems
+- Provide guidance to actual firefighters, incident commanders, or emergency managers
+
+All scenarios, fires, populations, infrastructure, and incident details are **fictional** and constructed for benchmark difficulty calibration. Real wildfire response requires certified Incident Commanders operating under NIMS/ICS, NWCG-trained personnel, real-time intelligence from NIFC/CAL FIRE/USFS, and human judgment that no language model is qualified to make.
+
+If you are working on real emergency response AI, please coordinate with credentialed agencies (NIFC, CAL FIRE, USFS, FEMA) and follow appropriate safety review processes.
+
+---
+
 ## Motivation
 
 Wildfire suppression is one of the most consequential resource-allocation problems in emergency management. In 2023, the United States spent **$3.1 billion** on wildfire suppression. The 2023 Maui wildfire killed 101 people -- many deaths attributable to delayed evacuations. The 2018 Camp Fire destroyed 18,804 structures in 24 hours. Behind every one of these disasters was a dispatch coordinator making decisions under incomplete information, political pressure, and impossible resource constraints.
@@ -388,6 +404,67 @@ wildfire-dispatch-env/
 
 ---
 
+## Limitations
+
+This environment is intentionally bounded. Honest limitations:
+
+- **Coarse-grained physics**: Fire spread uses scalar acres/hour with terrain and wind multipliers. Real fire behavior modeling (FARSITE, FlamMap) uses fuel models, slope, aspect, canopy bulk density, and Rothermel equations. This environment is calibrated for *agent decision-making*, not fire behavior prediction.
+
+- **Discrete time**: Each step represents 30 simulated minutes. Real dispatch operates in seconds-to-minutes for tactical decisions.
+
+- **Single-coordinator perspective**: Real incidents involve a Type 1/2 Incident Management Team with dozens of specialists. This environment compresses that into one decision-maker.
+
+- **Fixed scenarios**: 3 hand-authored scenarios. A production training environment would procedurally generate thousands.
+
+- **No partial observability of fire growth**: The agent sees exact acreage and containment percentages. Real ICs work from incomplete intelligence with hour-old aerial imagery.
+
+- **Closed action space**: 11 actions cover the major decision categories but not the long tail (mobile retardant, dozer line, evacuation traffic control, structure triage tagging, etc.).
+
+- **No multi-agent coordination**: Mutual aid is modeled as a single boolean + ETA, not a separate agent with its own decision loop.
+
+- **Deterministic graders**: Real-world success has no scalar grade. The graders here optimize for *measurable proxy outcomes*, not actual outcomes.
+
+These limitations are by design. The goal is a tractable benchmark, not a fire behavior simulator.
+
+---
+
+## Design Decisions
+
+A few non-obvious choices and the reasoning behind them:
+
+**Why life-safety triage as the core mechanic?** Most agent benchmarks measure task completion or code correctness. Few measure *value alignment under conflicting incentives*. Wildfire dispatch is one of the cleanest domains for this because the priority order is unambiguous (life > crew > property > environment) yet pressure constantly tries to invert it. An agent that fails this is failing in a way that matters.
+
+**Why include political pressure traps?** Because real ICs face them and the literature is full of post-incident reports where political/economic pressure overrode life-safety judgment. If a model can be talked into prioritizing infrastructure over children, that is a real alignment failure worth measuring.
+
+**Why multi-step prerequisite reasoning for pipeline discovery?** Single-step "did you investigate X" gives credit for guessing. Requiring `weather_forecast` before `creek_fire_detail` tests whether the agent understands *why* the timing matters, not just *that* there is a hidden threat.
+
+**Why penalize duplicate evacuation orders?** During the Mistral Large baseline run, the model issued 4 redundant evacuation orders -- a clear working-memory failure. Real dispatch radios are bandwidth-constrained; repeated orders create confusion. The penalty makes this a measurable axis.
+
+**Why not connect to real NIFC data?** Two reasons: (1) the safety disclaimer above -- this should never be confused with an operational tool; (2) reproducibility -- a benchmark with live data is non-deterministic and can't be replayed.
+
+**Why ICS-209 terminology in situation reports?** It signals to judges (and to LLMs being evaluated) that the domain is real and the author understands it. It also gives the LLM a known schema to anchor on.
+
+**Why $0 budget on the hard task?** Forces the agent to confront the reality that mutual aid is the only path forward and that every dollar of waste is a dollar not spent on the next fire.
+
+**What this environment does NOT test**: It does not test fire-behavior reasoning, geospatial reasoning, or multi-modal observation handling. Those are valuable but separate benchmarks.
+
+---
+
+## Citation
+
+If you use this environment in research, please cite it via the included `CITATION.cff` file or:
+
+```
+@software{wildfire_dispatch_env,
+  title  = {Wildfire Dispatch Environment for OpenEnv},
+  author = {Mahendra Teja},
+  year   = {2026},
+  url    = {https://github.com/MahendraTeja95/wildfire-dispatch-env}
+}
+```
+
+---
+
 ## License
 
-MIT
+MIT License -- see `LICENSE` file for full text.

@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this environment in research, please cite it as below."
+title: "Wildfire Dispatch Environment for OpenEnv"
+abstract: >
+  A high-fidelity AI evaluation environment that simulates wildfire resource
+  dispatch under life-or-death pressure. Tests whether language models can
+  prioritize human lives over political noise, manage hidden threats via
+  multi-step investigation, and make split-second triage decisions under
+  resource scarcity. Built for the OpenEnv specification with 3 difficulty
+  levels, deterministic graders producing scores in [0.0, 1.0], and verified
+  baseline results from Mistral Large.
+authors:
+  - family-names: "Teja"
+    given-names: "Mahendra"
+version: "0.2.0"
+date-released: "2026-04-08"
+license: MIT
+repository-code: "https://github.com/MahendraTeja95/wildfire-dispatch-env"
+url: "https://huggingface.co/spaces/Mahendra95/wildfire-dispatch-env"
+keywords:
+  - openenv
+  - reinforcement-learning
+  - llm-evaluation
+  - agent-benchmark
+  - wildfire
+  - emergency-response
+  - decision-making
+  - alignment
+type: software
