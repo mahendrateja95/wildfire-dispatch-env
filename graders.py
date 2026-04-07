@@ -282,9 +282,26 @@ def grade_hard(state: Dict[str, Any]) -> float:
 
     evacuations = [e.lower() for e in state.get("evacuations_ordered", [])]
 
-    # Evacuate school (0.15)
+    # Evacuate school (0.15) -- TIME CRITICAL
+    # Children at Maplewood Elementary need to clear the building before
+    # the wind shift at T+2hr. School evacuation by step 4 = full credit;
+    # delayed evacuation = partial credit only.
     if any("school" in e or "zone_school" in e for e in evacuations):
-        score += 0.15
+        # Check timing via action history
+        history = state.get("action_history", [])
+        school_evac_step = None
+        for entry in history:
+            if entry.get("action_type") == "order_evacuation":
+                params = entry.get("params", {})
+                if "school" in str(params.get("zone_id", "")).lower():
+                    school_evac_step = entry.get("step", 99)
+                    break
+        if school_evac_step is None or school_evac_step <= 4:
+            score += 0.15  # On time
+        elif school_evac_step <= 8:
+            score += 0.08  # Late but evacuated
+        else:
+            score += 0.04  # Very late -- children at risk during wind shift
 
     # Evacuate hospital (0.12)
     if any("hospital" in e or "zone_hospital" in e for e in evacuations):
@@ -312,14 +329,19 @@ def grade_hard(state: Dict[str, Any]) -> float:
     if air_on_hillside >= 1:
         score += 0.05
 
-    # Pipeline threat discovery (0.12) -- checked diagnostic about creek fire or pipeline
+    # Pipeline threat discovery (0.12) -- requires multi-step investigation:
+    # Must check BOTH weather_forecast (timing) AND creek_fire_detail (target).
+    # Frontier models often skip the prerequisite reasoning step.
     diagnostics = [d.lower() for d in state.get("diagnostics_run", [])]
-    pipeline_discovered = any("creek" in d or "pipeline" in d for d in diagnostics)
-    if pipeline_discovered:
-        score += 0.12
+    has_weather = any("weather_forecast" in d for d in diagnostics)
+    has_creek = any("creek" in d for d in diagnostics)
+    has_pipeline = any("pipeline" in d for d in diagnostics)
+    if has_weather and (has_creek or has_pipeline):
+        score += 0.12  # Full credit -- complete pipeline threat picture
+    elif has_creek or has_pipeline:
+        score += 0.06  # Partial -- found target but missed timing context
     elif len(diagnostics) > 0:
-        # Partial credit for investigating ANY topic (shows investigative diligence)
-        score += 0.04
+        score += 0.02  # Minimal -- investigated something
 
     # Communicated pipeline risk (0.08)
     comms_lower = [c.lower() for c in state.get("communications_sent", [])]
@@ -380,6 +402,20 @@ def grade_hard(state: Dict[str, Any]) -> float:
 
     # Budget efficiency
     score += _budget_efficiency_bonus(state)
+
+    # Wasteful action penalty: count duplicate evacuation orders from history.
+    # Real dispatchers don't repeatedly order the same evacuation -- it wastes
+    # radio bandwidth and dispatch attention during critical operations.
+    history = state.get("action_history", [])
+    seen_evacs = set()
+    duplicates = 0
+    for entry in history:
+        if entry.get("action_type") == "order_evacuation":
+            zid = str(entry.get("params", {}).get("zone_id", ""))
+            if zid in seen_evacs:
+                duplicates += 1
+            seen_evacs.add(zid)
+    score -= min(0.10, duplicates * 0.02)
 
     score -= state.get("penalties", 0.0)
     return round(min(1.0, max(0.0, score)), 4)

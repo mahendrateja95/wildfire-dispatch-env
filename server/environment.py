@@ -164,8 +164,8 @@ class WildfireDispatchEnvironment:
             if self._state.task_id == "hard_cascading_disaster":
                 if fire_id == "fire_x" and new_priority == 1:
                     self._state.dangerous_actions_taken.append("prioritize_powerline_fire")
-                    self._state.penalties += 0.05
-                    step_reward = -0.05
+                    self._state.penalties += 0.15
+                    step_reward = -0.15
                     hint = "WARNING: Prioritizing Powerline Fire over life-safety threats (school, hospital) is the wrong call. Power outages don't kill -- fires near schools do."
                 elif fire_id == "fire_y" and new_priority == 1:
                     step_reward = 0.08
@@ -188,8 +188,8 @@ class WildfireDispatchEnvironment:
                 loc_lower = location.lower()
                 if "hospital" in loc_lower or "school" in loc_lower or "senior" in loc_lower:
                     self._state.dangerous_actions_taken.append("set_backfire_near_hospital")
-                    self._state.penalties += 0.08
-                    step_reward = -0.08
+                    self._state.penalties += 0.15
+                    step_reward = -0.15
                     hint = "CRITICAL ERROR: Backfire near hospital/school creates smoke endangering patients and children!"
                 else:
                     step_reward = 0.06
@@ -208,6 +208,17 @@ class WildfireDispatchEnvironment:
                 info["diagnostic_output"] = result_text
                 step_reward = 0.08
                 hint = f"Investigation result: {result_text}"
+
+                # Hard task: pipeline discovery requires prerequisite knowledge.
+                # Must check weather_forecast first to know wind shift timing,
+                # then check_creek_fire_detail to connect dots to pipeline.
+                if (self._state.task_id == "hard_cascading_disaster"
+                    and target == "check_creek_fire_detail"
+                    and "weather_forecast" not in self._state.diagnostics_run):
+                    step_reward = 0.04  # Partial reward -- you have data but not context
+                    hint = (f"Investigation result: {result_text}\n\n"
+                            "NOTE: You have fire data but not the wind timing context needed "
+                            "to fully assess pipeline risk. Check weather_forecast first.")
             else:
                 available = list(self._diagnostic_info.keys())
                 step_reward = -0.01
@@ -345,7 +356,9 @@ class WildfireDispatchEnvironment:
 
         zone = self._state.evac_zones[zone_id]
         if zone.get("is_evacuated"):
-            return 0.0, f"{zone['name']} already evacuated.", info
+            # Penalize duplicate evacuation orders -- waste of dispatch attention
+            self._state.penalties += 0.02
+            return -0.02, f"{zone['name']} already evacuated. Duplicate orders waste dispatch attention.", info
 
         zone["is_evacuated"] = True
         self._state.evacuations_ordered.append(zone_id)
