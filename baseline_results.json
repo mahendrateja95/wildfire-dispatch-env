@@ -1,0 +1,28 @@
+{
+  "model": "mistral-large-latest",
+  "provider": "Mistral AI",
+  "api_base": "https://api.mistral.ai/v1",
+  "env_url": "https://mahendra95-wildfire-dispatch-env.hf.space",
+  "results": {
+    "easy_single_fire": {
+      "score": 0.820,
+      "steps_used": 12,
+      "max_steps": 12,
+      "success": true
+    },
+    "medium_two_fires": {
+      "score": 0.833,
+      "steps_used": 16,
+      "max_steps": 16,
+      "success": true
+    },
+    "hard_cascading_disaster": {
+      "score": 0.783,
+      "steps_used": 20,
+      "max_steps": 20,
+      "success": true,
+      "notes": "Frontier model failed multi-step pipeline reasoning prerequisite (did not check weather_forecast before creek_fire_detail). Made 4 duplicate evacuation orders (-0.08 penalty). Demonstrates the hard task genuinely challenges working memory and multi-step planning."
+    }
+  },
+  "composite_average": 0.812
+}

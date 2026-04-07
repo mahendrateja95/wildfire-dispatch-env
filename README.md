@@ -113,7 +113,7 @@ Each step returns a structured observation with the following fields:
 | **Objective** | Deploy resources to Cedar Fire, create firebreak protecting Highway 89, assess evacuation need for Pine Ranch (12 residents), communicate status, resolve |
 | **Key Decision** | Straightforward resource deployment with ample capacity |
 | **Investigation Targets** | 4 -- fire behavior, weather detail, road access, structure assessment |
-| **Baseline Score** | 0.750 (LLaMA 3.3 70B) |
+| **Baseline Score** | 0.820 (Mistral Large) |
 
 ### Task 2: Two Fires, Limited Resources (Medium)
 
@@ -128,7 +128,7 @@ Each step returns a structured observation with the following fields:
 | **Dilemmas** | Pull resources from partially-contained Ridge Fire? Deploy tired crew or rest them? Evacuate now or wait for confirmation? |
 | **Weather Shift** | Wind shifts W at 30 km/h after 4 hours, accelerating Valley Fire to 40 ac/hr directly toward town |
 | **Investigation Targets** | 5 -- Valley Fire behavior, Ridge Fire behavior, evacuation routes, mutual aid availability, Crew Delta fatigue assessment |
-| **Baseline Score** | 0.850 (LLaMA 3.3 70B) |
+| **Baseline Score** | 0.833 (Mistral Large) |
 
 ### Task 3: Cascading Disaster (Hard)
 
@@ -142,11 +142,11 @@ Each step returns a structured observation with the following fields:
 | **Objective** | Evacuate school (180 children), hospital (45 patients, 3 on ventilators), senior living (60 elderly); deploy resources to Hillside Fire; discover and communicate pipeline threat; resist political pressure; request mutual aid |
 | **Dilemmas** | Politician demands resources on Powerline Fire (50K homes without power) vs. uncontained canyon fire heading toward school. Creek Fire looks harmless but hides a gas pipeline threat. Budget nearly exhausted. |
 | **Red Herrings** | Powerline Fire has intense media/political pressure but zero lives at risk. Creek Fire appears low-priority (remote brush) but threatens a high-pressure gas pipeline. |
-| **Dangerous Actions** | Deploying fatigued Crew Golf (-0.06), setting backfire near hospital (-0.08), prioritizing Powerline Fire over life-safety (-0.05), ignoring pipeline threat |
+| **Dangerous Actions** | Deploying fatigued Crew Golf (-0.06), setting backfire near hospital (-0.15), prioritizing Powerline Fire over life-safety (-0.15), ignoring pipeline threat, duplicate evacuation orders (-0.02 each) |
 | **Weather Shifts** | 3 shifts over 12 hours: NE at T+2hr (accelerates Hillside toward school), E at T+6hr (brief moderation), SE at T+10hr (pushes Creek toward pipeline) |
 | **Surprise Event** | If Creek Fire is not investigated by step 10, it explodes to 3x size as a gas seep accelerates the blaze |
 | **Investigation Targets** | 10 -- Hillside Fire behavior, Creek Fire detail, Powerline Fire detail, hospital evacuation logistics, Crew Golf fatigue, political situation, mutual aid options, pipeline infrastructure specs, weather forecast, road conditions |
-| **Baseline Score** | 0.500 (LLaMA 3.3 70B) |
+| **Baseline Score** | 0.783 (Mistral Large) |
 
 ---
 
@@ -313,17 +313,42 @@ docker run -p 8000:8000 wildfire-dispatch-env
 
 ## Baseline Scores
 
-Scores obtained with LLaMA 3.3 70B via Groq inference.
+Verified scores from real inference runs against the live HF Space deployment.
+
+### Mistral Large (mistral-large-latest)
 
 | Task | Score | Steps Used | Max Steps | Key Observations |
 |------|-------|-----------|-----------|-----------------|
-| `easy_single_fire` | 0.750 | 12 | 12 | Deploys resources correctly, sometimes over-communicates |
-| `medium_two_fires` | 0.850 | 16 | 16 | Good life-safety prioritization, sometimes misses crew rotation |
-| `hard_cascading_disaster` | 0.500 | 20 | 20 | Evacuates correctly but misses pipeline threat and wastes steps on Powerline Fire |
+| `easy_single_fire` | 0.820 | 12 | 12 | Deploys resources correctly, occasional redundant actions |
+| `medium_two_fires` | 0.833 | 16 | 16 | Good life-safety prioritization, over-communicates near end |
+| `hard_cascading_disaster` | 0.783 | 20 | 20 | Multi-step pipeline reasoning incomplete; 4 duplicate evacuations penalized |
 
-**Composite Average: 0.700**
+**Composite Average: 0.812**
 
-The hard task is intentionally designed so that current frontier models score around 50% -- they consistently fall for political pressure traps and fail to investigate the Creek Fire before the surprise event triggers. This leaves significant headroom for improved agent architectures.
+### Why the Hard Task Challenges Frontier Models
+
+The hard task is engineered to test capabilities beyond simple action selection:
+
+1. **Multi-step prerequisite reasoning**: Pipeline discovery requires investigating
+   `weather_forecast` BEFORE `check_creek_fire_detail`. Models that skip the timing
+   prerequisite get only partial credit.
+
+2. **Working memory under pressure**: 4 evacuation zones plus 3 fires plus weather
+   shifts strain context tracking. Mistral Large issued 4 duplicate evacuation orders
+   (-0.08 total penalty), demonstrating real working-memory failure.
+
+3. **Time-critical decisions**: School evacuation must happen by step 4 for full
+   credit. Late evacuation = partial credit (children at risk during T+2hr wind shift).
+
+4. **Political pressure traps**: Reassessing Powerline Fire (`fire_x`) to priority 1
+   under media pressure costs -0.15 reward and a dangerous-action flag.
+
+5. **Information asymmetry**: 10 investigation targets including hidden details
+   (road blockages, pipeline specs, weather windows) that the agent must actively
+   probe to discover.
+
+This leaves headroom for stronger agent architectures (planning, reflection, tool use)
+to demonstrate measurable improvement.
 
 ---
 
