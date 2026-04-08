@@ -42,16 +42,31 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 ENV_URL = os.getenv("ENV_URL") or "http://localhost:8000"
 
-BENCHMARK = "wildfire_dispatch"
+BENCHMARK = os.getenv("WILDFIRE_DISPATCH_BENCHMARK", "wildfire_dispatch")
+TASK_NAME = os.getenv("WILDFIRE_DISPATCH_TASK", "easy_single_fire")
+
 TEMPERATURE = 0.1
 MAX_TOKENS = 512
 SUCCESS_SCORE_THRESHOLD = 0.3
 
-TASKS = [
-    {"task_id": "easy_single_fire", "task_name": "single-fire-containment", "max_steps": 12},
-    {"task_id": "medium_two_fires", "task_name": "two-fires-resource-allocation", "max_steps": 16},
-    {"task_id": "hard_cascading_disaster", "task_name": "cascading-wildfire-disaster", "max_steps": 20},
-]
+# Task configuration table -- selected by TASK_NAME env var
+_TASK_CONFIG = {
+    "easy_single_fire": {"display_name": "single-fire-containment", "max_steps": 12},
+    "medium_two_fires": {"display_name": "two-fires-resource-allocation", "max_steps": 16},
+    "hard_cascading_disaster": {"display_name": "cascading-wildfire-disaster", "max_steps": 20},
+}
+
+# Resolve task: accept either task_id ("easy_single_fire") or display name
+def _resolve_task(name: str) -> tuple:
+    if name in _TASK_CONFIG:
+        return name, _TASK_CONFIG[name]["display_name"], _TASK_CONFIG[name]["max_steps"]
+    for tid, cfg in _TASK_CONFIG.items():
+        if cfg["display_name"] == name:
+            return tid, name, cfg["max_steps"]
+    # Unknown task -- default to easy
+    return "easy_single_fire", _TASK_CONFIG["easy_single_fire"]["display_name"], _TASK_CONFIG["easy_single_fire"]["max_steps"]
+
+MAX_STEPS = _TASK_CONFIG.get(TASK_NAME, _TASK_CONFIG["easy_single_fire"])["max_steps"]
 
 # ---------------------------------------------------------------------------
 # Structured Logging -- EXACT FORMAT REQUIRED
@@ -300,10 +315,14 @@ def get_model_action(
 # ---------------------------------------------------------------------------
 
 
-async def run_task(env: WildfireDispatchEnv, task_config: Dict[str, Any]) -> Dict[str, Any]:
-    task_id = task_config["task_id"]
-    task_name = task_config["task_name"]
-    max_steps = task_config["max_steps"]
+async def main() -> None:
+    """Run a single episode for the task selected via TASK_NAME env var.
+
+    Mirrors the official OpenEnv hackathon sample structure: one [START],
+    one [STEP] per env.step(), one [END] -- always emitted, even on exception.
+    """
+    # Resolve task selection
+    task_id, display_name, max_steps = _resolve_task(TASK_NAME)
 
     history: List[str] = []
     rewards: List[float] = []
@@ -311,7 +330,14 @@ async def run_task(env: WildfireDispatchEnv, task_config: Dict[str, Any]) -> Dic
     score = 0.0
     success = False
 
-    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+    # Construct env client (from_docker_image when IMAGE_NAME set, else base_url)
+    if IMAGE_NAME:
+        env = await WildfireDispatchEnv.from_docker_image(IMAGE_NAME)
+    else:
+        env = WildfireDispatchEnv(base_url=ENV_URL)
+        await env.connect()
+
+    log_start(task=display_name, env=BENCHMARK, model=MODEL_NAME)
 
     try:
         result = await env.reset(task_id=task_id)
@@ -362,57 +388,23 @@ async def run_task(env: WildfireDispatchEnv, task_config: Dict[str, Any]) -> Dic
                 if "final_score" in info:
                     score = info["final_score"]
                 else:
-                    score = reward  # Last reward is the grader's final_score
+                    score = reward  # Last reward IS the grader's final_score
                 break
 
         if score == 0.0 and rewards and not done:
-            # Fallback only if episode never finished
             score = max(0.0, sum(rewards) / max(1, len(rewards)))
         score = min(max(score, 0.0), 1.0)
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
-        print(f"[DEBUG] Task {task_id} error: {exc}", flush=True)
+        print(f"[DEBUG] Episode error: {exc}", flush=True)
 
     finally:
+        try:
+            await env.close()
+        except Exception as e:
+            print(f"[DEBUG] env.close() error: {e}", flush=True)
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
-
-    return {
-        "task_id": task_id,
-        "task_name": task_name,
-        "score": score,
-        "steps": steps_taken,
-        "success": success,
-        "rewards": rewards,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
-async def main() -> None:
-    if IMAGE_NAME:
-        env = await WildfireDispatchEnv.from_docker_image(IMAGE_NAME)
-    else:
-        env = WildfireDispatchEnv(base_url=ENV_URL)
-        await env.connect()
-
-    results = []
-    try:
-        for task_config in TASKS:
-            result = await run_task(env, task_config)
-            results.append(result)
-    finally:
-        await env.close()
-
-    print("\n=== SUMMARY ===", file=sys.stderr)
-    for r in results:
-        print(f"  {r['task_name']}: score={r['score']:.3f} steps={r['steps']} success={r['success']}", file=sys.stderr)
-    if results:
-        avg = sum(r["score"] for r in results) / len(results)
-        print(f"  Average: {avg:.3f}", file=sys.stderr)
 
 
 if __name__ == "__main__":
