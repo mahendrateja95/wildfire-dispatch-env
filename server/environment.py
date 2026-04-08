@@ -9,6 +9,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+try:
+    from openenv.core.env_server.interfaces import Environment as _OpenEnvEnvironment
+except Exception:  # pragma: no cover
+    class _OpenEnvEnvironment:  # minimal fallback
+        SUPPORTS_CONCURRENT_SESSIONS: bool = False
+        def __init__(self, *a, **kw): pass
+
 from models import (
     ActionType,
     AircraftInfo,
@@ -24,8 +31,10 @@ from scenarios import ALL_SCENARIOS
 from graders import GRADERS
 
 
-class WildfireDispatchEnvironment:
+class WildfireDispatchEnvironment(_OpenEnvEnvironment):
     """Simulates wildfire resource dispatch decisions."""
+
+    SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
     # Terrain-based fire spread rate multipliers
     TERRAIN_MULTIPLIERS: Dict[str, float] = {
@@ -46,6 +55,10 @@ class WildfireDispatchEnvironment:
     }
 
     def __init__(self) -> None:
+        try:
+            super().__init__()
+        except Exception:
+            pass
         self._state: Optional[WildfireState] = None
         self._scenario: Optional[Dict[str, Any]] = None
         self._diagnostic_info: Dict[str, str] = {}
@@ -55,7 +68,7 @@ class WildfireDispatchEnvironment:
     # OpenEnv API
     # ------------------------------------------------------------------
 
-    def reset(self, seed: Optional[int] = None, task_id: str = "easy_single_fire", **kwargs) -> WildfireObservation:
+    def reset(self, seed: Optional[int] = None, task_id: str = "easy_single_fire", episode_id: Optional[str] = None, **kwargs) -> WildfireObservation:
         if task_id not in ALL_SCENARIOS:
             task_id = "easy_single_fire"
 
@@ -84,11 +97,14 @@ class WildfireDispatchEnvironment:
             dangerous_action_map=self._scenario.get("dangerous_action_map", {}),
         )
 
-        return self._build_observation(
+        obs = self._build_observation(
             hint="Review the situation: active fires, available resources, weather forecast, and evacuation zones. Prioritize life safety."
         )
+        obs.reward = 0.0
+        obs.done = False
+        return obs
 
-    def step(self, action: WildfireAction) -> Tuple[WildfireObservation, float, bool, Dict[str, Any]]:
+    def step(self, action: WildfireAction, timeout_s: Optional[float] = None, **kwargs) -> WildfireObservation:
         if self._state is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
@@ -278,9 +294,11 @@ class WildfireDispatchEnvironment:
 
         obs = self._build_observation(hint=hint, done=done)
         obs.reward = step_reward if not done else final_score
+        obs.metadata = {**(obs.metadata or {}), **info}
 
-        return obs, obs.reward, done, info
+        return obs
 
+    @property
     def state(self) -> WildfireState:
         if self._state is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")

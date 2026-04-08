@@ -12,9 +12,6 @@ MANDATORY
     API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
     MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
-- The inference script must be named `inference.py` and placed in the root directory of the project
-- Participants must use OpenAI Client for all LLM calls using above variables
-
 STDOUT FORMAT
 - The script must emit exactly three line types to stdout, in this order:
 
@@ -30,8 +27,10 @@ import sys
 import textwrap
 from typing import Any, Dict, List, Optional
 
-import requests
 from openai import OpenAI
+
+from client import WildfireDispatchEnv
+from models import WildfireAction
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -84,14 +83,15 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 # OpenAI LLM Client
 # ---------------------------------------------------------------------------
 
-client: Optional[OpenAI] = None
+_openai_client: Optional[OpenAI] = None
 
 
 def get_client() -> OpenAI:
-    global client
-    if client is None:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    return client
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    return _openai_client
+
 
 SYSTEM_PROMPT = textwrap.dedent("""
     You are an expert Wildfire Dispatch Coordinator managing active wildfires.
@@ -125,43 +125,34 @@ SYSTEM_PROMPT = textwrap.dedent("""
 
 
 # ---------------------------------------------------------------------------
-# Environment HTTP Helpers
-# ---------------------------------------------------------------------------
-
-
-def env_reset(task_id: str) -> Dict[str, Any]:
-    resp = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def env_step(action: Dict[str, Any]) -> Dict[str, Any]:
-    resp = requests.post(f"{ENV_URL}/step", json={"action": action}, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
-
-
-# ---------------------------------------------------------------------------
 # Observation -> Text (for LLM context)
 # ---------------------------------------------------------------------------
 
 
-def observation_to_text(obs_data: Dict[str, Any]) -> str:
-    obs = obs_data.get("observation", obs_data)
+def _obs_to_dict(obs: Any) -> Dict[str, Any]:
+    if hasattr(obs, "model_dump"):
+        return obs.model_dump()
+    if isinstance(obs, dict):
+        return obs
+    return {}
+
+
+def observation_to_text(obs: Any) -> str:
+    data = _obs_to_dict(obs)
     lines = []
 
     lines.append("=" * 50)
     lines.append("WILDFIRE DISPATCH -- SITUATION REPORT")
     lines.append("=" * 50)
-    lines.append(f"Task: {obs.get('task_id', '?')}")
-    lines.append(f"Objective: {obs.get('task_description', '')}")
-    lines.append(f"Time: {obs.get('time_elapsed_hours', 0):.1f}h elapsed")
-    lines.append(f"Budget: ${obs.get('budget_remaining', 0):,.0f} / ${obs.get('budget_total', 0):,.0f}")
+    lines.append(f"Task: {data.get('task_id', '?')}")
+    lines.append(f"Objective: {data.get('task_description', '')}")
+    lines.append(f"Time: {data.get('time_elapsed_hours', 0):.1f}h elapsed")
+    lines.append(f"Budget: ${data.get('budget_remaining', 0):,.0f} / ${data.get('budget_total', 0):,.0f}")
 
-    if obs.get("mutual_aid_eta_hours"):
-        lines.append(f"Mutual aid ETA: {obs['mutual_aid_eta_hours']:.1f}h")
+    if data.get("mutual_aid_eta_hours"):
+        lines.append(f"Mutual aid ETA: {data['mutual_aid_eta_hours']:.1f}h")
 
-    w = obs.get("weather")
+    w = data.get("weather")
     if w:
         lines.append(f"\n--- WEATHER ---")
         lines.append(f"Wind: {w.get('wind_speed_kmh', 0)}km/h from {w.get('wind_direction', '?')}")
@@ -170,7 +161,7 @@ def observation_to_text(obs_data: Dict[str, Any]) -> str:
         lines.append(f"Forecast: {w.get('forecast_change', 'stable')}")
 
     lines.append(f"\n--- FIRES ---")
-    for fire in obs.get("fires", []):
+    for fire in data.get("fires", []):
         lines.append(f"  {fire.get('name', '?')} [{fire.get('fire_id', '?')}]: "
                       f"{fire.get('acres', 0):.0f}ac, {fire.get('containment_percent', 0):.0f}% contained, "
                       f"spreading {fire.get('spread_direction', '?')} @ {fire.get('spread_rate_acres_per_hour', 0)}ac/hr, "
@@ -179,20 +170,20 @@ def observation_to_text(obs_data: Dict[str, Any]) -> str:
         lines.append(f"    Crews: {fire.get('crews_assigned', [])} Aircraft: {fire.get('aircraft_assigned', [])}")
 
     lines.append(f"\n--- CREWS ---")
-    for crew in obs.get("crews", []):
+    for crew in data.get("crews", []):
         warn = " **FATIGUED**" if crew.get("status") == "fatigued" else ""
         lines.append(f"  {crew.get('name', '?')} [{crew.get('crew_id', '?')}]: "
                       f"{crew.get('status', '?')}{warn}, {crew.get('hours_on_duty', 0):.0f}h duty, "
                       f"at {crew.get('location', '?')}, type={crew.get('specialty', '?')}")
 
     lines.append(f"\n--- AIRCRAFT ---")
-    for ac in obs.get("aircraft", []):
+    for ac in data.get("aircraft", []):
         lines.append(f"  {ac.get('name', '?')} [{ac.get('aircraft_id', '?')}]: "
                       f"{ac.get('aircraft_type', '?')}, {ac.get('status', '?')}, "
                       f"{ac.get('water_capacity_gallons', 0)}gal")
 
     lines.append(f"\n--- EVACUATION ZONES ---")
-    for zone in obs.get("evacuation_zones", []):
+    for zone in data.get("evacuation_zones", []):
         status = "EVACUATED" if zone.get("is_evacuated") else "NOT EVACUATED"
         vuln = " [VULNERABLE]" if zone.get("has_vulnerable") else ""
         lines.append(f"  {zone.get('name', '?')} [{zone.get('zone_id', '?')}]: "
@@ -202,28 +193,27 @@ def observation_to_text(obs_data: Dict[str, Any]) -> str:
         if zone.get("description"):
             lines.append(f"    {zone['description']}")
 
-    if obs.get("communication_log"):
+    if data.get("communication_log"):
         lines.append(f"\n--- COMMS ---")
-        for msg in obs["communication_log"][-5:]:
+        for msg in data["communication_log"][-5:]:
             lines.append(f"  {msg}")
 
     lines.append(f"\n--- ACTIONS ---")
-    for act in obs.get("available_actions", []):
+    for act in data.get("available_actions", []):
         lines.append(f"  {act}")
 
-    if obs.get("hint"):
-        lines.append(f"\nHINT: {obs['hint']}")
+    if data.get("hint"):
+        lines.append(f"\nHINT: {data['hint']}")
 
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Action formatting
+# Action formatting / parsing
 # ---------------------------------------------------------------------------
 
 
 def format_action_str(action: Dict[str, Any]) -> str:
-    """Format action dict as compact string for [STEP] log."""
     at = action.get("action_type", "unknown")
     params = action.get("parameters", {})
     if params:
@@ -233,10 +223,8 @@ def format_action_str(action: Dict[str, Any]) -> str:
 
 
 def parse_action(llm_response: str) -> Dict[str, Any]:
-    """Extract JSON action from LLM response."""
     text = llm_response.strip()
 
-    # Handle markdown code blocks
     if "```" in text:
         parts = text.split("```")
         for part in parts:
@@ -249,13 +237,11 @@ def parse_action(llm_response: str) -> Dict[str, Any]:
                 except json.JSONDecodeError:
                     continue
 
-    # Direct parse
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Find first { ... } block
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1:
@@ -264,7 +250,6 @@ def parse_action(llm_response: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-    # Fallback
     return {"action_type": "resolve", "parameters": {}}
 
 
@@ -279,7 +264,6 @@ def get_model_action(
     last_reward: float,
     history: List[str],
 ) -> str:
-    """Ask the LLM for the next action given the observation."""
     history_block = "\n".join(history[-6:]) if history else "None"
     user_prompt = textwrap.dedent(f"""
         Step: {step}
@@ -316,8 +300,7 @@ def get_model_action(
 # ---------------------------------------------------------------------------
 
 
-async def run_task(task_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Run a single task episode."""
+async def run_task(env: WildfireDispatchEnv, task_config: Dict[str, Any]) -> Dict[str, Any]:
     task_id = task_config["task_id"]
     task_name = task_config["task_name"]
     max_steps = task_config["max_steps"]
@@ -331,25 +314,27 @@ async def run_task(task_config: Dict[str, Any]) -> Dict[str, Any]:
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        # Reset environment
-        reset_data = env_reset(task_id)
-        obs_text = observation_to_text(reset_data)
+        result = await env.reset(task_id=task_id)
+        obs = result.observation
+        obs_text = observation_to_text(obs)
         last_reward = 0.0
-        done = reset_data.get("done", False)
+        done = bool(result.done)
 
         for step in range(1, max_steps + 1):
             if done:
                 break
 
-            # Get action from LLM
             llm_response = get_model_action(step, obs_text, last_reward, history)
-            action = parse_action(llm_response)
-            action_str = format_action_str(action)
+            action_dict = parse_action(llm_response)
+            action_str = format_action_str(action_dict)
 
-            # Step environment
             error = None
             try:
-                step_data = env_step(action)
+                wf_action = WildfireAction(
+                    action_type=action_dict.get("action_type", "resolve"),
+                    parameters=action_dict.get("parameters", {}) or {},
+                )
+                step_result = await env.step(wf_action)
             except Exception as e:
                 error = str(e)
                 log_step(step=step, action=action_str, reward=0.0, done=False, error=error)
@@ -358,9 +343,9 @@ async def run_task(task_config: Dict[str, Any]) -> Dict[str, Any]:
                 history.append(f"Step {step}: {action_str} -> ERROR: {error}")
                 continue
 
-            obs = step_data.get("observation", {})
-            reward = step_data.get("reward", 0.0) or 0.0
-            done = step_data.get("done", False)
+            obs = step_result.observation
+            reward = step_result.reward or 0.0
+            done = bool(step_result.done)
 
             rewards.append(reward)
             steps_taken = step
@@ -369,20 +354,20 @@ async def run_task(task_config: Dict[str, Any]) -> Dict[str, Any]:
             log_step(step=step, action=action_str, reward=reward, done=done, error=error)
 
             history.append(f"Step {step}: {action_str} -> reward {reward:+.2f}")
-            obs_text = observation_to_text(step_data)
+            obs_text = observation_to_text(obs)
 
-            # Extract final score from info if done
             if done:
-                info = obs.get("info", {})
+                # Environment sets obs.reward = final_score on terminal step
+                info = _obs_to_dict(obs).get("metadata", {}) or {}
                 if "final_score" in info:
                     score = info["final_score"]
-
-            if done:
+                else:
+                    score = reward  # Last reward is the grader's final_score
                 break
 
-        # Calculate score if not set by grader
-        if score == 0.0 and rewards:
-            score = max(0.0, sum(rewards))
+        if score == 0.0 and rewards and not done:
+            # Fallback only if episode never finished
+            score = max(0.0, sum(rewards) / max(1, len(rewards)))
         score = min(max(score, 0.0), 1.0)
         success = score >= SUCCESS_SCORE_THRESHOLD
 
@@ -408,17 +393,26 @@ async def run_task(task_config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def main() -> None:
-    results = []
-    for task_config in TASKS:
-        result = await run_task(task_config)
-        results.append(result)
+    if IMAGE_NAME:
+        env = await WildfireDispatchEnv.from_docker_image(IMAGE_NAME)
+    else:
+        env = WildfireDispatchEnv(base_url=ENV_URL)
+        await env.connect()
 
-    # Summary to stderr (not part of structured output)
+    results = []
+    try:
+        for task_config in TASKS:
+            result = await run_task(env, task_config)
+            results.append(result)
+    finally:
+        await env.close()
+
     print("\n=== SUMMARY ===", file=sys.stderr)
     for r in results:
         print(f"  {r['task_name']}: score={r['score']:.3f} steps={r['steps']} success={r['success']}", file=sys.stderr)
-    avg = sum(r["score"] for r in results) / len(results)
-    print(f"  Average: {avg:.3f}", file=sys.stderr)
+    if results:
+        avg = sum(r["score"] for r in results) / len(results)
+        print(f"  Average: {avg:.3f}", file=sys.stderr)
 
 
 if __name__ == "__main__":
