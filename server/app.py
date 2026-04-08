@@ -33,20 +33,19 @@ app = create_app(
 )
 
 
-def main(host: str = "0.0.0.0", port: int | None = None) -> None:
+def main() -> None:
     """Entry point for `python -m server.app`."""
-    import uvicorn
-
-    if port is None:
-        port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run(app, host=host, port=port)
-
-
-if __name__ == "__main__":
     import argparse
+    import uvicorn
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=None)
     args = parser.parse_args()
-    main(host=args.host, port=args.port)
+
+    port = args.port if args.port is not None else int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host=args.host, port=port)
+
+
+if __name__ == "__main__":
+    main()
