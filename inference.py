@@ -36,11 +36,17 @@ from models import WildfireAction
 # Configuration
 # ---------------------------------------------------------------------------
 
-IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME") or os.getenv("IMAGE_NAME")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-ENV_URL = os.getenv("ENV_URL") or "http://localhost:8000"
+# Required environment variables (strict match to OpenEnv hackathon spec)
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+# Optional -- when running env via from_docker_image()
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
+# Optional convenience -- ENV_URL lets the script connect to a remote
+# environment server (e.g. an HF Space) instead of spinning up a Docker image.
+ENV_URL = os.getenv("ENV_URL", "http://localhost:8000")
 
 BENCHMARK = os.getenv("WILDFIRE_DISPATCH_BENCHMARK", "wildfire_dispatch")
 TASK_NAME = os.getenv("WILDFIRE_DISPATCH_TASK", "easy_single_fire")
@@ -104,7 +110,7 @@ _openai_client: Optional[OpenAI] = None
 def get_client() -> OpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        _openai_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     return _openai_client
 
 
@@ -330,9 +336,9 @@ async def main() -> None:
     score = 0.0
     success = False
 
-    # Construct env client (from_docker_image when IMAGE_NAME set, else base_url)
-    if IMAGE_NAME:
-        env = await WildfireDispatchEnv.from_docker_image(IMAGE_NAME)
+    # Construct env client (from_docker_image when LOCAL_IMAGE_NAME set, else base_url)
+    if LOCAL_IMAGE_NAME:
+        env = await WildfireDispatchEnv.from_docker_image(LOCAL_IMAGE_NAME)
     else:
         env = WildfireDispatchEnv(base_url=ENV_URL)
         await env.connect()
