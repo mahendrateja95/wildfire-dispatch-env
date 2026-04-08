@@ -297,13 +297,27 @@ pip install -r requirements.txt
 python -m server.app
 ```
 
-In a separate terminal:
+### Quick Demo (no API key required)
+
+The fastest way to verify the environment works end-to-end. Runs all 3 tasks
+using deterministic scripted optimal action sequences and prints scores.
 
 ```bash
-export API_BASE_URL="https://api.openai.com/v1"
-export MODEL_NAME="gpt-4o-mini"
-export OPENAI_API_KEY="your-key"
+# In another terminal, with the server running:
+ENV_URL=http://localhost:8000 python demo.py
+
+# Or against the live HF Space:
+ENV_URL=https://mahendra95-wildfire-dispatch-env.hf.space python demo.py
+```
+
+### Inference with a real LLM
+
+```bash
+export API_BASE_URL="https://api.mistral.ai/v1"
+export MODEL_NAME="mistral-large-latest"
+export HF_TOKEN="your-key"
 export ENV_URL="http://localhost:8000"
+export WILDFIRE_DISPATCH_TASK="hard_cascading_disaster"  # or easy_single_fire / medium_two_fires
 python inference.py
 ```
 
@@ -390,6 +404,7 @@ wildfire-dispatch-env/
 ├── Dockerfile             # Container config (HF Spaces compatible)
 ├── requirements.txt       # Python dependencies
 ├── inference.py           # Baseline inference script (OpenAI-compatible client)
+├── demo.py                # Quick demo script -- runs all 3 tasks, no API key needed
 ├── models.py              # Pydantic models: Action, Observation, State, FireInfo, CrewInfo, etc.
 ├── scenarios.py           # 3 wildfire scenarios with ICS-209 briefings, investigation targets, dangerous action descriptions
 ├── graders.py             # Deterministic multi-objective graders (timing, ordering, budget, comm quality bonuses)
