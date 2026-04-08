@@ -304,6 +304,44 @@ class WildfireDispatchEnvironment(_OpenEnvEnvironment):
             raise RuntimeError("Environment not initialized. Call reset() first.")
         return self._state
 
+    def get_metadata(self):
+        """Override to expose task list and grader info to validators."""
+        try:
+            from openenv.core.env_server.types import EnvironmentMetadata
+        except Exception:
+            return None
+
+        task_lines = []
+        for tid in ALL_SCENARIOS.keys():
+            grader = GRADERS.get(tid)
+            grader_str = f" [grader: {grader.__name__}]" if grader else " [no grader]"
+            task_lines.append(f"  - {tid}{grader_str}")
+        task_block = "\n".join(task_lines)
+
+        description = (
+            f"Wildfire Dispatch Environment -- {len(ALL_SCENARIOS)} tasks with deterministic graders.\n"
+            f"Tasks:\n{task_block}\n"
+            "Each task is graded by a function in graders.py producing a float in [0.0, 1.0]."
+        )
+
+        readme_content = (
+            "# Wildfire Dispatch Environment\n\n"
+            f"This environment exposes **{len(ALL_SCENARIOS)} tasks**, each with a "
+            f"deterministic grader producing scores in [0.0, 1.0]:\n\n"
+            + "\n".join(f"- `{tid}` -- grader: `{GRADERS[tid].__name__}`"
+                        for tid in ALL_SCENARIOS.keys() if tid in GRADERS)
+            + "\n\nSee /tasks endpoint for the full task manifest."
+        )
+
+        return EnvironmentMetadata(
+            name="WildfireDispatchEnvironment",
+            description=description,
+            readme_content=readme_content,
+            version="1.0.0",
+            author="Mahendra Teja",
+            documentation_url="https://github.com/MahendraTeja95/wildfire-dispatch-env",
+        )
+
     # ------------------------------------------------------------------
     # Action handlers
     # ------------------------------------------------------------------

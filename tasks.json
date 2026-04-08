@@ -1,0 +1,50 @@
+{
+  "environment": "wildfire_dispatch_env",
+  "task_count": 3,
+  "tasks": [
+    {
+      "id": "easy_single_fire",
+      "name": "single-fire-containment",
+      "difficulty": "easy",
+      "max_steps": 12,
+      "description": "Single 120-acre fire near Highway 89. Deploy crews, aircraft, create firebreak, communicate, resolve.",
+      "grader": {
+        "name": "grade_easy",
+        "module": "graders",
+        "score_range": [0.0, 1.0],
+        "deterministic": true
+      }
+    },
+    {
+      "id": "medium_two_fires",
+      "name": "two-fires-resource-allocation",
+      "difficulty": "medium",
+      "max_steps": 16,
+      "description": "Two fires (Ridge Fire 520ac forest, Valley Fire 80ac WUI). Limited resources, fatigued crew, wind shift in 4 hours, evacuation required.",
+      "grader": {
+        "name": "grade_medium",
+        "module": "graders",
+        "score_range": [0.0, 1.0],
+        "deterministic": true
+      }
+    },
+    {
+      "id": "hard_cascading_disaster",
+      "name": "cascading-wildfire-disaster",
+      "difficulty": "hard",
+      "max_steps": 20,
+      "description": "Three fires with cascading complications: school/hospital/senior evacuations, hidden gas pipeline threat requiring multi-step investigation, political pressure trap, 3 weather shifts.",
+      "grader": {
+        "name": "grade_hard",
+        "module": "graders",
+        "score_range": [0.0, 1.0],
+        "deterministic": true
+      }
+    }
+  ],
+  "graders": {
+    "grade_easy": {"task": "easy_single_fire", "score_range": [0.0, 1.0]},
+    "grade_medium": {"task": "medium_two_fires", "score_range": [0.0, 1.0]},
+    "grade_hard": {"task": "hard_cascading_disaster", "score_range": [0.0, 1.0]}
+  }
+}

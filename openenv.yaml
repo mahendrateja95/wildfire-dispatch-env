@@ -4,3 +4,25 @@ type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+
+# 3 tasks, each with a deterministic grader returning float in [0.0, 1.0].
+# Graders are defined in graders.py and registered in graders.GRADERS dict.
+tasks:
+  - id: easy_single_fire
+    name: single-fire-containment
+    difficulty: easy
+    max_steps: 12
+    grader: grade_easy
+    score_range: [0.0, 1.0]
+  - id: medium_two_fires
+    name: two-fires-resource-allocation
+    difficulty: medium
+    max_steps: 16
+    grader: grade_medium
+    score_range: [0.0, 1.0]
+  - id: hard_cascading_disaster
+    name: cascading-wildfire-disaster
+    difficulty: hard
+    max_steps: 20
+    grader: grade_hard
+    score_range: [0.0, 1.0]
