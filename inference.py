@@ -57,9 +57,9 @@ SUCCESS_SCORE_THRESHOLD = 0.3
 
 # Task configuration table -- selected by TASK_NAME env var
 _TASK_CONFIG = {
-    "easy_single_fire": {"display_name": "single-fire-containment", "max_steps": 12},
-    "medium_two_fires": {"display_name": "two-fires-resource-allocation", "max_steps": 16},
-    "hard_cascading_disaster": {"display_name": "cascading-wildfire-disaster", "max_steps": 20},
+    "easy_single_fire": {"display_name": "single-fire-containment", "max_steps": 12, "grader": "grade_easy"},
+    "medium_two_fires": {"display_name": "two-fires-resource-allocation", "max_steps": 16, "grader": "grade_medium"},
+    "hard_cascading_disaster": {"display_name": "cascading-wildfire-disaster", "max_steps": 20, "grader": "grade_hard"},
 }
 
 # Resolve task: accept either task_id ("easy_single_fire") or display name
@@ -79,8 +79,9 @@ MAX_STEPS = _TASK_CONFIG.get(TASK_NAME, _TASK_CONFIG["easy_single_fire"])["max_s
 # ---------------------------------------------------------------------------
 
 
-def log_start(task: str, env: str, model: str) -> None:
-    print(f"[START] task={task} env={env} model={model}", flush=True)
+def log_start(task: str, env: str, model: str, grader: str = "") -> None:
+    grader_part = f" grader={grader}" if grader else ""
+    print(f"[START] task={task} env={env} model={model}{grader_part}", flush=True)
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
@@ -92,10 +93,11 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, score: float, rewards: List[float], grader: str = "") -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    grader_part = f" grader={grader}" if grader else ""
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}{grader_part}",
         flush=True,
     )
 
@@ -321,29 +323,15 @@ def get_model_action(
 # ---------------------------------------------------------------------------
 
 
-async def main() -> None:
-    """Run a single episode for the task selected via TASK_NAME env var.
-
-    Mirrors the official OpenEnv hackathon sample structure: one [START],
-    one [STEP] per env.step(), one [END] -- always emitted, even on exception.
-    """
-    # Resolve task selection
-    task_id, display_name, max_steps = _resolve_task(TASK_NAME)
-
+async def run_one_task(env: WildfireDispatchEnv, task_id: str, display_name: str, max_steps: int, grader: str = "") -> None:
+    """Run a single episode for one task. Always emits [START] + [END]."""
     history: List[str] = []
     rewards: List[float] = []
     steps_taken = 0
     score = 0.0
     success = False
 
-    # Construct env client (from_docker_image when LOCAL_IMAGE_NAME set, else base_url)
-    if LOCAL_IMAGE_NAME:
-        env = await WildfireDispatchEnv.from_docker_image(LOCAL_IMAGE_NAME)
-    else:
-        env = WildfireDispatchEnv(base_url=ENV_URL)
-        await env.connect()
-
-    log_start(task=display_name, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=display_name, env=BENCHMARK, model=MODEL_NAME, grader=grader)
 
     try:
         result = await env.reset(task_id=task_id)
@@ -389,7 +377,6 @@ async def main() -> None:
             obs_text = observation_to_text(obs)
 
             if done:
-                # Environment sets obs.reward = final_score on terminal step
                 info = _obs_to_dict(obs).get("metadata", {}) or {}
                 if "final_score" in info:
                     score = info["final_score"]
@@ -403,14 +390,46 @@ async def main() -> None:
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
-        print(f"[DEBUG] Episode error: {exc}", flush=True)
+        print(f"[DEBUG] Task {task_id} error: {exc}", flush=True)
 
+    finally:
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards, grader=grader)
+
+
+async def main() -> None:
+    """Run all 3 tasks in one execution.
+
+    Each task emits its own [START] / [STEP] / [END] block, so the
+    Phase 2 validator parsing stdout sees 3 distinct tasks with graders.
+
+    If WILDFIRE_DISPATCH_TASK env var is set to a specific task, only run
+    that one (sample-script compatibility mode for single-task validators).
+    """
+    # Construct env client (from_docker_image when LOCAL_IMAGE_NAME set, else base_url)
+    if LOCAL_IMAGE_NAME:
+        env = await WildfireDispatchEnv.from_docker_image(LOCAL_IMAGE_NAME)
+    else:
+        env = WildfireDispatchEnv(base_url=ENV_URL)
+        await env.connect()
+
+    try:
+        # If WILDFIRE_DISPATCH_TASK is explicitly set, run only that task.
+        # Otherwise iterate through all 3 -- the default for hackathon validation.
+        explicit_task = os.getenv("WILDFIRE_DISPATCH_TASK")
+        if explicit_task:
+            task_id, display_name, max_steps = _resolve_task(explicit_task)
+            grader = _TASK_CONFIG.get(task_id, {}).get("grader", "")
+            await run_one_task(env, task_id, display_name, max_steps, grader)
+        else:
+            for i, (task_id, cfg) in enumerate(_TASK_CONFIG.items()):
+                if i > 0:
+                    await asyncio.sleep(3)  # avoid provider rate limits between tasks
+                await run_one_task(env, task_id, cfg["display_name"], cfg["max_steps"], cfg.get("grader", ""))
     finally:
         try:
             await env.close()
         except Exception as e:
             print(f"[DEBUG] env.close() error: {e}", flush=True)
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
